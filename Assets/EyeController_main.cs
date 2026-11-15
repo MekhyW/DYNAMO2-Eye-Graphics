@@ -12,8 +12,6 @@ public class EyeController_main : MonoBehaviour
     public Toggle sillyMode;
     public CubismParameter eyeballXL, eyeballYL, eyeballXR, eyeballYR, eyeOpenL, eyeOpenR, eyeSmileL, eyeSmileR, eyeDeform, browYL, browYR, browAngleL, browAngleR, activSpace, activCry, activHypno, activHeart, activRainbow, activNightmare, activGears, activFire, activSans;
     public CubismRenderer mask_esclera1, mask_esclera2;
-    public GameObject[] glitchSounds;
-    public GameObject[] robotSounds;
     public GameObject[] normalBlinkSounds;
     public GameObject[] sillyBlinkSounds;
     public GameObject gearBlinkSound;
@@ -237,24 +235,8 @@ public class EyeController_main : MonoBehaviour
             isGlitchAnimating = true;
             glitchAnimationTimer = 0f;
             useAnalogGlitch = UnityEngine.Random.Range(0, 2) == 0;
-            int randomIndex = UnityEngine.Random.Range(0, glitchSounds.Length);
-            glitchSounds[randomIndex].GetComponent<AudioSource>().volume = 0.1f;
-            glitchSounds[randomIndex].SetActive(false);
-            glitchSounds[randomIndex].SetActive(true);
         }
         else { timer_glitch -= Time.deltaTime; }
-    }
-
-    private void RobotSound()
-    {
-        if (timer_gears <= 0 && robotSounds.Length > 0)
-        {
-            int randomIndex = UnityEngine.Random.Range(0, robotSounds.Length);
-            robotSounds[randomIndex].SetActive(false);
-            robotSounds[randomIndex].SetActive(true);
-            timer_gears = RandomGaussian(5.0f, TIMER_GEARS_RAND_MAX);
-        }
-        else { timer_gears -= Time.deltaTime; }
     }
 
     private void Start()
@@ -269,6 +251,5 @@ public class EyeController_main : MonoBehaviour
         ApplyExpressions();
         UpdateAutoExposure();
         GlitchEffect();
-        RobotSound();
     }
 }
