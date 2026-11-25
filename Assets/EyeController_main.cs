@@ -16,6 +16,8 @@ public class EyeController_main : MonoBehaviour
     public GameObject[] sillyBlinkSounds;
     public GameObject gearBlinkSound;
     public PostProcessProfile postProcessProfile;
+    [Tooltip("Procedural brow/lid motion and audio reactions. Added automatically at runtime if missing.")]
+    public EyeMotionLayer motion;
     AutoExposure autoExposure;
 
     const float SPEED = 18;
@@ -41,6 +43,11 @@ public class EyeController_main : MonoBehaviour
     static bool useAnalogGlitch = false;
     static float offsetX_idle = 0;
     static float offsetY_idle = 0;
+    static bool lastBlinkWasDouble = false;
+
+    // Expression-driven values before the procedural motion offsets are added
+    bool baseInitialized = false;
+    float baseOpenL, baseOpenR, baseBrowYL, baseBrowAngleL;
 
     private Func<double, double[], double> closest = (val, set) =>
     {
@@ -94,7 +101,7 @@ public class EyeController_main : MonoBehaviour
         {
             offsetX_idle = UnityEngine.Random.Range((float)-xSlider.maxValue / 20, (float)xSlider.maxValue / 20);
             offsetY_idle = UnityEngine.Random.Range((float)-ySlider.maxValue / 20, (float)ySlider.maxValue / 20);
-            timer_idle = UnityEngine.Random.Range(0.0f, TIMER_IDLE_RAND_MAX);
+            timer_idle = UnityEngine.Random.Range(0.0f, TIMER_IDLE_RAND_MAX / motion.GazeActivity);
         }
         else { timer_idle -= Time.deltaTime; }
         if (Math.Abs(xCurrent) < AVG_SLIDER/2)
@@ -113,40 +120,72 @@ public class EyeController_main : MonoBehaviour
 
     private void MoveEyelids()
     {
+        float targetL, targetR;
+        bool lidsLocked = true;
         if (hypnoticSlider.value > AVG_SLIDER)
         {
-            eyeOpenL.Value = Mathf.Lerp(eyeOpenL.Value, leftEyeClosenessSlider.maxValue - 0.2f, Time.deltaTime * SPEED);
-            eyeOpenR.Value = Mathf.Lerp(eyeOpenR.Value, rightEyeClosenessSlider.maxValue - 0.2f, Time.deltaTime * SPEED);
-            return;
+            targetL = leftEyeClosenessSlider.maxValue - 0.2f;
+            targetR = rightEyeClosenessSlider.maxValue - 0.2f;
         }
-        if (mischievousSlider.value > AVG_SLIDER)
+        else if (mischievousSlider.value > AVG_SLIDER)
         {
-            eyeOpenL.Value = Mathf.Lerp(eyeOpenL.Value, leftEyeClosenessSlider.maxValue - 0.7f, Time.deltaTime * SPEED);
-            eyeOpenR.Value = Mathf.Lerp(eyeOpenR.Value, rightEyeClosenessSlider.maxValue - 0.7f, Time.deltaTime * SPEED);
-            return;
-        }
-        if (timer_blink <= 0)
-        {
-            eyeOpenL.Value = Mathf.Lerp(eyeOpenL.Value, leftEyeClosenessSlider.minValue, Time.deltaTime * SPEED);
-            eyeOpenR.Value = Mathf.Lerp(eyeOpenR.Value, rightEyeClosenessSlider.minValue, Time.deltaTime * SPEED);
-            if (timer_blink < -BLINK_DURATION) {
-                GameObject selectedBlinkSound = null;
-                if (activGears.Value > AVG_SLIDER) { selectedBlinkSound = gearBlinkSound; }
-                else if (sillyMode.isOn && sillyBlinkSounds.Length > 0) { selectedBlinkSound = sillyBlinkSounds[UnityEngine.Random.Range(0, sillyBlinkSounds.Length)]; } 
-                else if (normalBlinkSounds.Length > 0) { selectedBlinkSound = normalBlinkSounds[UnityEngine.Random.Range(0, normalBlinkSounds.Length)]; }
-                if (selectedBlinkSound != null) {
-                    selectedBlinkSound.SetActive(false);
-                    selectedBlinkSound.SetActive(true);
-                }
-                timer_blink = RandomGaussian(1.0f, TIMER_BLINK_RAND_MAX);
-            }
+            targetL = leftEyeClosenessSlider.maxValue - 0.7f;
+            targetR = rightEyeClosenessSlider.maxValue - 0.7f;
         }
         else
         {
-            eyeOpenL.Value = Mathf.Lerp(eyeOpenL.Value, leftEyeClosenessSlider.maxValue - leftEyeClosenessSlider.value, Time.deltaTime * SPEED);
-            eyeOpenR.Value = Mathf.Lerp(eyeOpenR.Value, rightEyeClosenessSlider.maxValue - rightEyeClosenessSlider.value, Time.deltaTime * SPEED);
+            lidsLocked = false;
+            if (motion.ConsumeBlinkRequest() && timer_blink > 0.15f) { timer_blink = 0; }
+            if (timer_blink <= 0)
+            {
+                targetL = leftEyeClosenessSlider.minValue;
+                targetR = rightEyeClosenessSlider.minValue;
+                if (timer_blink < -BLINK_DURATION) {
+                    GameObject selectedBlinkSound = null;
+                    if (activGears.Value > AVG_SLIDER) { selectedBlinkSound = gearBlinkSound; }
+                    else if (sillyMode.isOn && sillyBlinkSounds.Length > 0) { selectedBlinkSound = sillyBlinkSounds[UnityEngine.Random.Range(0, sillyBlinkSounds.Length)]; }
+                    else if (normalBlinkSounds.Length > 0) { selectedBlinkSound = normalBlinkSounds[UnityEngine.Random.Range(0, normalBlinkSounds.Length)]; }
+                    if (selectedBlinkSound != null) {
+                        selectedBlinkSound.SetActive(false);
+                        selectedBlinkSound.SetActive(true);
+                    }
+                    if (!lastBlinkWasDouble && UnityEngine.Random.value < motion.doubleBlinkChance)
+                    {
+                        timer_blink = UnityEngine.Random.Range(0.2f, 0.35f);
+                        lastBlinkWasDouble = true;
+                    }
+                    else
+                    {
+                        timer_blink = RandomGaussian(1.0f, TIMER_BLINK_RAND_MAX) / motion.BlinkRateMultiplier;
+                        lastBlinkWasDouble = false;
+                    }
+                }
+            }
+            else
+            {
+                targetL = leftEyeClosenessSlider.maxValue - leftEyeClosenessSlider.value;
+                targetR = rightEyeClosenessSlider.maxValue - rightEyeClosenessSlider.value;
+            }
+            timer_blink -= Time.deltaTime;
         }
-        timer_blink -= Time.deltaTime;
+        baseOpenL = Mathf.Lerp(baseOpenL, targetL, Time.deltaTime * SPEED);
+        baseOpenR = Mathf.Lerp(baseOpenR, targetR, Time.deltaTime * SPEED);
+        eyeOpenL.Value = ComposeLid(eyeOpenL, baseOpenL, lidsLocked ? 0 : motion.LidL);
+        eyeOpenR.Value = ComposeLid(eyeOpenR, baseOpenR, lidsLocked ? 0 : motion.LidR);
+    }
+
+    // Lid offsets fade out as the lid closes, so blinks still close fully
+    private static float ComposeLid(CubismParameter lid, float baseValue, float offset)
+    {
+        float open01 = Mathf.InverseLerp(lid.MinimumValue, lid.MaximumValue, baseValue);
+        return Mathf.Clamp(baseValue + offset * open01, lid.MinimumValue, lid.MaximumValue);
+    }
+
+    // Brow expressions are scaled back by the motion layer's headroom so full-strength poses (score 1.0 pins the
+    // brows at ±1) still leave room for the procedural motion instead of clamping it away
+    private float ComposeBrow(CubismParameter param, float baseValue, float offset)
+    {
+        return Mathf.Clamp(baseValue * (1f - motion.expressionHeadroom) + offset, param.MinimumValue, param.MaximumValue);
     }
 
     private void ApplyExpressions()
@@ -164,21 +203,24 @@ public class EyeController_main : MonoBehaviour
         else if (topExpr == angrySlider.value) { eyeDeform.Value = Mathf.Lerp(eyeDeform.Value, topExpr*0.25f, Time.deltaTime * SPEED); }
         else { eyeDeform.Value = Mathf.Lerp(eyeDeform.Value, 0, Time.deltaTime * SPEED); }
         //Brow Y L
-        if (mischievousSlider.value > AVG_SLIDER) { browYL.Value = Mathf.Lerp(browYL.Value, -browYL.MaximumValue, Time.deltaTime * SPEED); }
-        else if (topExpr == surprisedSlider.value) { browYL.Value = Mathf.Lerp(browYL.Value, topExpr, Time.deltaTime * SPEED); }
-        else if (topExpr == sadSlider.value || topExpr == angrySlider.value || topExpr == disgustedSlider.value) { browYL.Value = Mathf.Lerp(browYL.Value, -topExpr, Time.deltaTime * SPEED); }
-        else { browYL.Value = Mathf.Lerp(browYL.Value, 0, Time.deltaTime * SPEED); }
+        if (mischievousSlider.value > AVG_SLIDER) { baseBrowYL = Mathf.Lerp(baseBrowYL, -browYL.MaximumValue, Time.deltaTime * SPEED); }
+        else if (topExpr == surprisedSlider.value) { baseBrowYL = Mathf.Lerp(baseBrowYL, topExpr, Time.deltaTime * SPEED); }
+        else if (topExpr == sadSlider.value || topExpr == angrySlider.value || topExpr == disgustedSlider.value) { baseBrowYL = Mathf.Lerp(baseBrowYL, -topExpr, Time.deltaTime * SPEED); }
+        else { baseBrowYL = Mathf.Lerp(baseBrowYL, 0, Time.deltaTime * SPEED); }
         //Brow Y R
-        if (topExpr == disgustedSlider.value) { browYR.Value = -browYL.Value; }
-        else { browYR.Value = browYL.Value; }
+        float baseBrowYR = topExpr == disgustedSlider.value ? -baseBrowYL : baseBrowYL;
         //Brow Angle L
-        if (mischievousSlider.value > AVG_SLIDER) { browAngleL.Value = Mathf.Lerp(browAngleL.Value, browAngleL.MaximumValue - 0.5f, Time.deltaTime * SPEED); }
-        else if (topExpr == angrySlider.value || topExpr == disgustedSlider.value) { browAngleL.Value = Mathf.Lerp(browAngleL.Value, topExpr, Time.deltaTime * SPEED); }
-        else if (topExpr == sadSlider.value) { browAngleL.Value = Mathf.Lerp(browAngleL.Value, -topExpr, Time.deltaTime * SPEED); }
-        else { browAngleL.Value = Mathf.Lerp(browAngleL.Value, 0, Time.deltaTime * SPEED); }
+        if (mischievousSlider.value > AVG_SLIDER) { baseBrowAngleL = Mathf.Lerp(baseBrowAngleL, browAngleL.MaximumValue - 0.5f, Time.deltaTime * SPEED); }
+        else if (topExpr == angrySlider.value || topExpr == disgustedSlider.value) { baseBrowAngleL = Mathf.Lerp(baseBrowAngleL, topExpr, Time.deltaTime * SPEED); }
+        else if (topExpr == sadSlider.value) { baseBrowAngleL = Mathf.Lerp(baseBrowAngleL, -topExpr, Time.deltaTime * SPEED); }
+        else { baseBrowAngleL = Mathf.Lerp(baseBrowAngleL, 0, Time.deltaTime * SPEED); }
         //Brow Angle R
-        if (topExpr == disgustedSlider.value) { browAngleR.Value = browAngleL.Value*0.75f; }
-        else { browAngleR.Value = browAngleL.Value; }
+        float baseBrowAngleR = topExpr == disgustedSlider.value ? baseBrowAngleL * 0.75f : baseBrowAngleL;
+        //Brows = expression + procedural motion
+        browYL.Value = ComposeBrow(browYL, baseBrowYL, motion.BrowYL);
+        browYR.Value = ComposeBrow(browYR, baseBrowYR, motion.BrowYR);
+        browAngleL.Value = ComposeBrow(browAngleL, baseBrowAngleL, motion.BrowAngleL);
+        browAngleR.Value = ComposeBrow(browAngleR, baseBrowAngleR, motion.BrowAngleR);
         //Cry
         if (topExpr == sadSlider.value) { activCry.Value = Mathf.Lerp(activCry.Value, topExpr, Time.deltaTime * SPEED); }
         else { activCry.Value = Mathf.Lerp(activCry.Value, 0, Time.deltaTime * SPEED); }
@@ -242,10 +284,27 @@ public class EyeController_main : MonoBehaviour
     private void Start()
     {
         autoExposure = postProcessProfile.GetSetting<AutoExposure>();
+        if (motion == null) { motion = GetComponent<EyeMotionLayer>(); }
+        if (motion == null) { motion = gameObject.AddComponent<EyeMotionLayer>(); }
+    }
+
+    private void StepMotionLayer()
+    {
+        if (!baseInitialized)
+        {
+            baseOpenL = eyeOpenL.Value; baseOpenR = eyeOpenR.Value;
+            baseBrowYL = browYL.Value; baseBrowAngleL = browAngleL.Value;
+            baseInitialized = true;
+        }
+        float topExpr = Mathf.Max(angrySlider.value, disgustedSlider.value, happySlider.value, neutralSlider.value, sadSlider.value, surprisedSlider.value);
+        float negativeMood = (topExpr == angrySlider.value || topExpr == disgustedSlider.value) ? Mathf.Clamp01(topExpr) : 0f;
+        float gazeY = (eyeballYL.Value + eyeballYR.Value) * 0.5f;
+        motion.Step(Time.deltaTime, gazeY, timer_blink <= 0, negativeMood);
     }
 
     private void Update()
     {
+        StepMotionLayer();
         MoveEyes();
         MoveEyelids();
         ApplyExpressions();
